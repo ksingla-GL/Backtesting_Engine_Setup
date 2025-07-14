@@ -1,0 +1,10 @@
+# Core dependencies for backtesting system
+pandas>=1.5.0
+numpy>=1.23.0
+matplotlib>=3.5.0
+openpyxl>=3.0.0  # For Excel file reading
+pyarrow>=10.0.0  # For Parquet file support
+
+# Optional but recommended
+plotly>=5.0.0  # For interactive charts
+seaborn>=0.12.0  # For better visualizations
