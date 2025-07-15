@@ -234,30 +234,102 @@ class IndicatorCalculator:
                                     target_index: pd.DatetimeIndex) -> pd.DataFrame:
         """
         Align all indicators to the target timeframe for backtesting
+        FIXED: Properly handles daily-to-minute alignment
         """
         aligned_df = pd.DataFrame(index=target_index)
         
+        logger.info(f"Aligning indicators to {target_timeframe} timeframe with {len(target_index)} bars")
+        
         for name, data in indicators.items():
             if name == 'market_indicators' and isinstance(data, pd.DataFrame):
-                # Handle market indicators DataFrame
+                # Handle market indicators DataFrame (daily frequency)
+                logger.info(f"Aligning market indicators (daily) to {target_timeframe}")
+                
                 for col in data.columns:
                     if col != 'datetime':
-                        aligned_df[col] = data.set_index('datetime')[col].reindex(
-                            target_index, method='ffill'
-                        )
+                        # Get the series with datetime index
+                        if isinstance(data.index, pd.DatetimeIndex):
+                            series = data[col]
+                        else:
+                            series = data.set_index('datetime')[col]
+                        
+                        # Check if this is daily data being aligned to minute data
+                        if target_timeframe in ['1min', '5min', '15min', '30min', '1hour'] and len(series) < len(target_index) / 5:
+                            logger.info(f"Aligning daily indicator {col} to {target_timeframe} frequency")
+                            
+                            # Create a mapping of dates to values
+                            date_to_value = {}
+                            for idx, value in series.items():
+                                # Get just the date part
+                                if hasattr(idx, 'date'):
+                                    date_key = idx.date()
+                                else:
+                                    date_key = pd.to_datetime(idx).date()
+                                date_to_value[date_key] = value
+                            
+                            # Map to target frequency
+                            aligned_values = []
+                            last_valid_value = None
+                            
+                            for dt in target_index:
+                                date_key = dt.date()
+                                if date_key in date_to_value:
+                                    value = date_to_value[date_key]
+                                    last_valid_value = value
+                                    aligned_values.append(value)
+                                else:
+                                    # Use last valid value (forward fill)
+                                    if last_valid_value is not None:
+                                        aligned_values.append(last_valid_value)
+                                    else:
+                                        # Look back up to 7 days for a value
+                                        value_found = False
+                                        for days_back in range(1, 8):
+                                            prev_date = date_key - pd.Timedelta(days=days_back)
+                                            if prev_date in date_to_value:
+                                                value = date_to_value[prev_date]
+                                                last_valid_value = value
+                                                aligned_values.append(value)
+                                                value_found = True
+                                                break
+                                        
+                                        if not value_found:
+                                            aligned_values.append(np.nan)
+                            
+                            aligned_df[col] = aligned_values
+                            logger.info(f"Aligned {col}: {len(series)} daily values to {len(aligned_values)} {target_timeframe} values")
+                        else:
+                            # Same frequency or compatible alignment
+                            aligned_df[col] = series.reindex(target_index, method='ffill')
+                            
             elif isinstance(data, pd.Series):
                 # Handle regular Series indicators
                 if isinstance(data.index, pd.DatetimeIndex):
                     # Different frequency - need to align
                     if len(data) != len(target_index) or not data.index.equals(target_index):
-                        aligned_df[name] = data.reindex(target_index, method='ffill')
+                        # Check if this is minute-frequency data (should match target)
+                        if abs(len(data) - len(target_index)) < 100:  # Close enough, just reindex
+                            aligned_df[name] = data.reindex(target_index, method='ffill')
+                        else:
+                            # Significant difference, might be daily data
+                            logger.warning(f"Indicator {name} has {len(data)} values vs {len(target_index)} target bars")
+                            aligned_df[name] = data.reindex(target_index, method='ffill')
                     else:
                         aligned_df[name] = data
                 else:
-                    # Same length, just assign
+                    # No datetime index, assume same length
                     if len(data) == len(target_index):
                         aligned_df[name] = data.values
-                        
+                    else:
+                        logger.warning(f"Indicator {name} length mismatch: {len(data)} vs {len(target_index)}")
+        
+        # Forward fill any remaining NaN values
+        aligned_df = aligned_df.fillna(method='ffill').fillna(method='bfill')
+        
+        # Log summary
+        valid_columns = aligned_df.notna().any()
+        logger.info(f"Alignment complete. Valid indicators: {valid_columns.sum()}/{len(aligned_df.columns)}")
+        
         return aligned_df
     
     def get_lookback_required(self, indicator_expressions: List[str]) -> int:
