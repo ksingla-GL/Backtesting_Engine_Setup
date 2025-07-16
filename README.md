@@ -146,7 +146,3 @@ Options:
 2. **Missing indicators**: Ensure market indicator files are properly named
 3. **Expression errors**: Verify your rule expressions follow the correct syntax
 4. **Memory issues**: For very long backtests, consider chunking by year
-
-## License
-
-MIT License - See LICENSE file for details
